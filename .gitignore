@@ -1,0 +1,8 @@
+/project-context
+**/node_modules
+.vercel
+dist
+.env
+.env.local
+.env.*.local
+
