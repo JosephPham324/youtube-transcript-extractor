@@ -1,4 +1,6 @@
 import { YoutubeTranscript } from 'youtube-transcript';
+import fetch from 'node-fetch';
+import { HttpsProxyAgent } from 'https-proxy-agent';
 
 export default async function handler(req: any, res: any) {
   // Set CORS headers if needed, otherwise rely on Vercel's defaults
@@ -10,15 +12,30 @@ export default async function handler(req: any, res: any) {
 
   try {
     // Vercel parses req.body automatically for POST JSON payloads
-    const { videoId, preferredLanguage } = req.body || {};
+    const { videoId, preferredLanguage, proxyUrl } = req.body || {};
 
     if (!videoId) {
       return res.status(400).json({ error: 'Missing videoId' });
     }
 
     try {
-      // 1. Fetch transcript using the library
-      const transcriptData = await YoutubeTranscript.fetchTranscript(videoId, { lang: preferredLanguage || 'en' });
+      // Construct proxy agent if client passes a proxy URL
+      const proxyAgent = proxyUrl ? new HttpsProxyAgent(proxyUrl) : undefined;
+
+      // Custom fetch wrapper to route egress traffic through the proxy
+      async function proxyFetch(url: string, init?: any) {
+        const options = { ...init };
+        if (proxyAgent) {
+          options.agent = proxyAgent;
+        }
+        return fetch(url, options);
+      }
+
+      // 1. Fetch transcript using the library and the custom fetch wrapper
+      const transcriptData = await YoutubeTranscript.fetchTranscript(videoId, {
+        lang: preferredLanguage || 'en',
+        fetch: proxyFetch as any
+      });
       
       // 2. Map payload to SDD constraints
       const segments = transcriptData.map((item) => ({
