@@ -1,15 +1,7 @@
 const RE_YOUTUBE = /(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/)([^"&?\/\s]{11})/i;
 const USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_4) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/85.0.4183.83 Safari/537.36,gzip(gfe)';
 const RE_XML_TRANSCRIPT = /<text start="([^"]*)" dur="([^"]*)">([^<]*)<\/text>/g;
-const INNERTUBE_API_URL = 'https://www.youtube.com/youtubei/v1/player?prettyPrint=false';
-const INNERTUBE_CLIENT_VERSION = '20.10.38';
-const INNERTUBE_CONTEXT = {
-  client: {
-    clientName: 'ANDROID',
-    clientVersion: INNERTUBE_CLIENT_VERSION,
-  },
-};
-const INNERTUBE_USER_AGENT = `com.google.android.youtube/${INNERTUBE_CLIENT_VERSION} (Linux; U; Android 14)`;
+
 
 export interface ClientTranscriptSegment {
   text: string;
@@ -31,44 +23,13 @@ export class ClientYoutubeTranscript {
 
   /**
    * Fetches the transcript directly from the client browser.
+   * Note: We bypass the InnerTube API (which uses POST JSON and triggers preflight OPTIONS checks)
+   * and go straight to the WebPage HTML scraper (which uses simple GET requests with zero preflights).
+   * This makes CORS extensions work perfectly out of the box with no complex setup!
    */
   public static async fetchTranscript(videoId: string, lang: string = 'en'): Promise<ClientTranscriptSegment[]> {
     const identifier = this.retrieveVideoId(videoId);
-    // Try InnerTube API first
-    const innerTubeResult = await this.fetchViaInnerTube(identifier, lang);
-    if (innerTubeResult) {
-      return innerTubeResult;
-    }
-    // Fall back to HTML scraping
     return this.fetchViaWebPage(identifier, lang);
-  }
-
-  /**
-   * Fetches transcript via YouTube's InnerTube API.
-   */
-  private static async fetchViaInnerTube(identifier: string, lang: string): Promise<ClientTranscriptSegment[] | undefined> {
-    try {
-      const resp = await fetch(INNERTUBE_API_URL, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'User-Agent': INNERTUBE_USER_AGENT,
-        },
-        body: JSON.stringify({
-          context: INNERTUBE_CONTEXT,
-          videoId: identifier,
-        }),
-      });
-      if (!resp.ok) return undefined;
-      const data = await resp.json();
-      const captionTracks = data?.captions?.playerCaptionsTracklistRenderer?.captionTracks;
-      if (!Array.isArray(captionTracks) || captionTracks.length === 0) {
-        return undefined;
-      }
-      return this.fetchTranscriptFromTracks(captionTracks, lang);
-    } catch {
-      return undefined;
-    }
   }
 
   /**
