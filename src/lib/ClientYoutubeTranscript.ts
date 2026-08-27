@@ -21,15 +21,58 @@ export class ClientYoutubeTranscript {
     throw new Error('Impossible to retrieve Youtube video ID.');
   }
 
+  private static readonly INNERTUBE_API_URL = 'https://www.youtube.com/youtubei/v1/player?prettyPrint=false';
+  private static readonly INNERTUBE_CLIENT_VERSION = '20.10.38';
+  private static readonly INNERTUBE_USER_AGENT = `com.google.android.youtube/${ClientYoutubeTranscript.INNERTUBE_CLIENT_VERSION} (Linux; U; Android 14)`;
+
   /**
    * Fetches the transcript directly from the client browser.
-   * Note: We bypass the InnerTube API (which uses POST JSON and triggers preflight OPTIONS checks)
-   * and go straight to the WebPage HTML scraper (which uses simple GET requests with zero preflights).
-   * This makes CORS extensions work perfectly out of the box with no complex setup!
+   * Tries YouTube's InnerTube API (Android context) first, falling back to WebPage scraping.
    */
   public static async fetchTranscript(videoId: string, lang: string = 'en'): Promise<ClientTranscriptSegment[]> {
     const identifier = this.retrieveVideoId(videoId);
+
+    // 1. Try InnerTube API (Android client context)
+    const innerTubeResult = await this.fetchViaInnerTube(identifier, lang);
+    if (innerTubeResult && innerTubeResult.length > 0) {
+      return innerTubeResult;
+    }
+
+    // 2. Fall back to WebPage scraping
     return this.fetchViaWebPage(identifier, lang);
+  }
+
+  /**
+   * Fetches transcript via InnerTube API.
+   */
+  private static async fetchViaInnerTube(identifier: string, lang: string): Promise<ClientTranscriptSegment[] | null> {
+    try {
+      const resp = await fetch(this.INNERTUBE_API_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'User-Agent': this.INNERTUBE_USER_AGENT,
+        },
+        body: JSON.stringify({
+          context: {
+            client: {
+              clientName: 'ANDROID',
+              clientVersion: this.INNERTUBE_CLIENT_VERSION,
+            },
+          },
+          videoId: identifier,
+        }),
+      });
+      if (!resp.ok) return null;
+      const data = await resp.json();
+      const captionTracks = data?.captions?.playerCaptionsTracklistRenderer?.captionTracks;
+      if (!Array.isArray(captionTracks) || captionTracks.length === 0) {
+        return null;
+      }
+      return await this.fetchTranscriptFromTracks(captionTracks, lang);
+    } catch {
+      return null;
+    }
   }
 
   /**
@@ -61,10 +104,25 @@ export class ClientYoutubeTranscript {
    * Extracts a JSON object assigned to a global variable in inline script tags.
    */
   private static parseInlineJson(html: string, globalName: string): any {
-    const startToken = `var ${globalName} = `;
-    const startIndex = html.indexOf(startToken);
-    if (startIndex === -1) return null;
-    const jsonStart = startIndex + startToken.length;
+    const patterns = [
+      `var ${globalName} = `,
+      `window["${globalName}"] = `,
+      `window['${globalName}'] = `,
+      `${globalName} = `
+    ];
+
+    let jsonStart = -1;
+
+    for (const pattern of patterns) {
+      const idx = html.indexOf(pattern);
+      if (idx !== -1) {
+        jsonStart = idx + pattern.length;
+        break;
+      }
+    }
+
+    if (jsonStart === -1) return null;
+
     let depth = 0;
     for (let i = jsonStart; i < html.length; i++) {
       if (html[i] === '{') depth++;
@@ -86,12 +144,15 @@ export class ClientYoutubeTranscript {
    * Given caption tracks, selects the right one, fetches, and parses the transcript XML.
    */
   private static async fetchTranscriptFromTracks(captionTracks: any[], lang: string): Promise<ClientTranscriptSegment[]> {
-    const hasDesiredLang = captionTracks.some((track) => track.languageCode === lang);
-    const track = hasDesiredLang
-      ? captionTracks.find((track) => track.languageCode === lang)
-      : captionTracks[0];
+    const targetTrack =
+      captionTracks.find((track) => track.languageCode === lang) ||
+      captionTracks.find((track) => track.languageCode?.startsWith(lang)) ||
+      captionTracks[0];
 
-    const transcriptURL = track.baseUrl;
+    const transcriptURL = targetTrack?.baseUrl;
+    if (!transcriptURL) {
+      throw new Error('TRANSCRIPT_NOT_AVAILABLE');
+    }
     try {
       const url = new URL(transcriptURL);
       if (!url.hostname.endsWith('.youtube.com')) {

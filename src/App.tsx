@@ -209,6 +209,7 @@ function App() {
                   placeholder="sk-..."
                   value={apiKey}
                   onChange={(e) => setApiKey(e.target.value)}
+                  autoComplete="new-password"
                   className="flex-1 px-3 py-2 bg-white border border-slate-200 rounded-lg shadow-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-600 text-sm"
                   required
                 />
@@ -288,6 +289,7 @@ function App() {
                   placeholder="http://username:password@host:port"
                   value={proxyUrl}
                   onChange={(e) => setProxyUrl(e.target.value)}
+                  autoComplete="new-password"
                   className="flex-1 px-3 py-2 bg-white border border-slate-200 rounded-lg shadow-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-600 text-sm"
                   required
                 />
